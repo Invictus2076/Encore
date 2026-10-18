@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Concerts{% endblock %}
+{% block content %}
+<section class="hero">
+  <h1>Live music,<br><em>booked in seconds.</em></h1>
+  <p class="lede">Find a show, grab your seats and follow the artists you love.</p>
+</section>
+
+<form class="filters" method="get" action="{{ url_for('index') }}" role="search">
+  <label class="grow"><span>Artist or venue</span><input type="search" name="q" value="{{ args.q }}" placeholder="Search concerts"></label>
+  <label><span>From</span><input type="date" name="from" value="{{ args['from'] }}" min="{{ today.isoformat() }}"></label>
+  <label><span>To</span><input type="date" name="to" value="{{ args.to }}" min="{{ today.isoformat() }}"></label>
+  <label><span>Max price (₹)</span><input type="number" name="max" value="{{ args.max }}" min="0" step="1" inputmode="numeric"></label>
+  <label><span>Sort</span><select name="sort">
+    <option value="date" {% if args.sort == 'date' %}selected{% endif %}>Soonest</option>
+    <option value="price_low" {% if args.sort == 'price_low' %}selected{% endif %}>Price: low to high</option>
+    <option value="price_high" {% if args.sort == 'price_high' %}selected{% endif %}>Price: high to low</option>
+  </select></label>
+  <button class="btn">Find shows</button>
+  {% if filtered %}<a class="clear" href="{{ url_for('index') }}">Clear</a>{% endif %}
+</form>
+
+<h2 class="section">{% if filtered %}{{ concerts|length }} match{{ 'es' if concerts|length != 1 }}{% else %}Upcoming{% endif %}</h2>
+{% if concerts %}
+  <div class="grid">{% for c in concerts %}{% include "_ticket.html" %}{% endfor %}</div>
+{% else %}
+  <div class="empty"><p>{% if filtered %}No concerts match those filters.{% else %}No upcoming concerts yet. Check back soon.{% endif %}</p>
+  {% if filtered %}<a class="btn ghost" href="{{ url_for('index') }}">Show everything</a>{% endif %}</div>
+{% endif %}
+{% endblock %}

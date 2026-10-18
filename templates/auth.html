@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Sign up' if mode == 'register' else 'Log in' }}{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>{{ 'Create your account' if mode == 'register' else 'Welcome back' }}</h1>
+  <form method="post" class="stack">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    <label><span>Username</span><input name="username" value="{{ username }}" required minlength="3" maxlength="40" autocomplete="username" autofocus></label>
+    <label><span>Password</span><input type="password" name="password" required {% if mode == 'register' %}minlength="8" autocomplete="new-password"{% else %}autocomplete="current-password"{% endif %}>
+      {% if mode == 'register' %}<small>At least 8 characters.</small>{% endif %}</label>
+    <button class="btn wide">{{ 'Sign up' if mode == 'register' else 'Log in' }}</button>
+  </form>
+  <p class="muted center">{% if mode == 'register' %}Already have an account? <a href="{{ url_for('login', next=request.args.get('next')) }}">Log in</a>
+  {% else %}New to Encore? <a href="{{ url_for('register', next=request.args.get('next')) }}">Create an account</a> · <a href="{{ url_for('admin_login') }}">Admin</a>{% endif %}</p>
+</section>
+{% endblock %}

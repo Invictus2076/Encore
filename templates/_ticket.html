@@ -1,0 +1,18 @@
+{# One concert as a ticket stub. Expects `c`, optional `favs`. #}
+{% set left = c.available_tickets or 0 %}{% set total = c.total_tickets or 0 %}
+<article class="ticket{% if left == 0 %} soldout{% endif %}">
+  <a class="stub" href="{{ url_for('concert', concert_id=c.concert_id) }}" aria-label="{{ c.artist_name }} at {{ c.venue }}, {{ c.date|longdate }}">
+    <span class="d">{{ c.date|day }}</span><span class="m">{{ c.date|month }}</span>
+  </a>
+  <div class="body">
+    <h3><a href="{{ url_for('concert', concert_id=c.concert_id) }}">{{ c.artist_name }}</a>{% if favs and c.artist_name in favs %} <span class="fav" title="You follow this artist">★</span>{% endif %}</h3>
+    <p class="meta">{{ c.venue }} · {{ c.time|clock }}</p>
+    <div class="row">
+      <span class="price">{{ c.ticket_price|money }}</span>
+      {% if left == 0 %}<span class="tag out">Sold out</span>
+      {% elif total and left / total <= 0.15 %}<span class="tag low">{{ left }} left</span>
+      {% else %}<span class="tag">{{ left }} left</span>{% endif %}
+    </div>
+    {% if total %}<div class="meter" role="img" aria-label="{{ total - left }} of {{ total }} tickets sold"><i style="width:{{ ((total - left) / total * 100)|round(1) }}%"></i></div>{% endif %}
+  </div>
+</article>

@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Favourites{% endblock %}
+{% block content %}
+<h1 class="page">Favourites</h1>
+{% if artists %}
+  <ul class="chips" aria-label="Artists you follow">
+  {% for a in artists %}<li><form method="post" action="{{ url_for('toggle_favourite') }}">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="artist" value="{{ a }}"><input type="hidden" name="next" value="{{ request.path }}">
+    <span>★ {{ a }}</span><button class="x" aria-label="Unfollow {{ a }}">×</button></form></li>{% endfor %}
+  </ul>
+  <h2 class="section">Their upcoming shows</h2>
+  {% if shows %}<div class="grid">{% for c in shows %}{% include "_ticket.html" %}{% endfor %}</div>
+  {% else %}<div class="empty"><p>None of the artists you follow have upcoming shows right now.</p></div>{% endif %}
+{% else %}
+  <div class="empty"><p>Follow artists from any concert page and their shows will collect here.</p><a class="btn" href="{{ url_for('index') }}">Browse concerts</a></div>
+{% endif %}
+{% endblock %}

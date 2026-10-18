@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}{{ c.artist_name }}{% endblock %}
+{% block content %}
+{% set left = c.available_tickets or 0 %}{% set total = c.total_tickets or 0 %}{% set past = c.date|isodate < today.isoformat() %}
+<a class="back" href="{{ url_for('index') }}">← All concerts</a>
+<section class="show">
+  <div class="poster">
+    <p class="when">{{ c.date|longdate }} · {{ c.time|clock }}</p>
+    <h1>{{ c.artist_name }}</h1>
+    <p class="where">{{ c.venue }}</p>
+    <p class="by">Presented by {{ c.organizer }}</p>
+    {% if session.user %}
+    <form method="post" action="{{ url_for('toggle_favourite') }}">
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      <input type="hidden" name="artist" value="{{ c.artist_name }}">
+      <input type="hidden" name="next" value="{{ request.path }}">
+      <button class="btn ghost" aria-pressed="{{ 'true' if is_fav else 'false' }}">{{ '★ Following' if is_fav else '☆ Follow artist' }}</button>
+    </form>
+    {% endif %}
+  </div>
+  <aside class="buy" aria-labelledby="buy-h">
+    <h2 id="buy-h">Tickets</h2>
+    <p class="big">{{ c.ticket_price|money }} <span>each</span></p>
+    {% if total %}<div class="meter" role="img" aria-label="{{ total - left }} of {{ total }} tickets sold"><i style="width:{{ ((total - left) / total * 100)|round(1) }}%"></i></div>
+    <p class="muted">{{ left }} of {{ total }} left</p>{% endif %}
+    {% if past %}
+      <p class="note">This concert has already happened.</p>
+    {% elif left == 0 %}
+      <p class="note">Sold out.</p>
+    {% elif session.user %}
+      <form method="post" action="{{ url_for('book', concert_id=c.concert_id) }}" class="bookform">
+        <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+        <label><span>How many?</span>
+          <select name="tickets">{% for n in range(1, [left, max_per]|min + 1) %}<option value="{{ n }}">{{ n }} ticket{{ 's' if n > 1 }} · {{ (c.ticket_price * n)|money }}</option>{% endfor %}</select>
+        </label>
+        <button class="btn wide">Book now</button>
+      </form>
+    {% elif session.admin %}
+      <p class="note">Admins can't book. Log in as a user to buy tickets.</p>
+    {% else %}
+      <a class="btn wide" href="{{ url_for('login', next=request.path) }}">Log in to book</a>
+      <p class="muted center">New here? <a href="{{ url_for('register', next=request.path) }}">Create an account</a></p>
+    {% endif %}
+  </aside>
+</section>
+{% if more %}
+<h2 class="section">More from {{ c.artist_name }}</h2>
+<div class="grid">{% for c in more %}{% include "_ticket.html" %}{% endfor %}</div>
+{% endif %}
+{% endblock %}

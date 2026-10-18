@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}My tickets{% endblock %}
+{% block content %}
+<h1 class="page">My tickets</h1>
+{% if not upcoming and not past %}
+  <div class="empty"><p>You haven't booked anything yet.</p><a class="btn" href="{{ url_for('index') }}">Find a concert</a></div>
+{% endif %}
+{% if upcoming %}
+<h2 class="section">Upcoming</h2>
+<ul class="list">
+  {% for b in upcoming %}
+  <li class="pass">
+    <div><p class="pass-id">Booking #{{ b.booking_id }}</p>
+      <h3><a href="{{ url_for('concert', concert_id=b.concert_id) }}">{{ b.artist_name }}</a></h3>
+      <p class="meta">{{ b.date|longdate }} · {{ b.time|clock }} · {{ b.venue }}</p></div>
+    <div class="pass-side"><p class="big">{{ b.no_of_tickets }} <span>ticket{{ 's' if b.no_of_tickets != 1 }}</span></p>
+      <p class="muted">{{ (b.ticket_price * b.no_of_tickets)|money }}</p>
+      <form method="post" action="{{ url_for('cancel_booking', booking_id=b.booking_id) }}" onsubmit="return confirm('Cancel booking #{{ b.booking_id }}? The seats go back on sale.')">
+        <input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="link danger">Cancel booking</button></form></div>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% if past %}
+<h2 class="section">Past</h2>
+<ul class="list past">
+  {% for b in past %}<li class="pass"><div><p class="pass-id">Booking #{{ b.booking_id }}</p><h3>{{ b.artist_name }}</h3><p class="meta">{{ b.date|longdate }} · {{ b.venue }}</p></div>
+  <div class="pass-side"><p class="big">{{ b.no_of_tickets }} <span>ticket{{ 's' if b.no_of_tickets != 1 }}</span></p></div></li>{% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

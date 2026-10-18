@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<div class="page-head"><h1 class="page">Dashboard</h1><a class="btn" href="{{ url_for('admin_new') }}">+ Add concert</a></div>
+<dl class="stats">
+  <div><dt>Upcoming shows</dt><dd>{{ stats.upcoming }}</dd></div>
+  <div><dt>Tickets sold</dt><dd>{{ stats.sold }}</dd></div>
+  <div><dt>Revenue</dt><dd>{{ stats.revenue|money }}</dd></div>
+  <div><dt>Registered users</dt><dd>{{ stats.users }}</dd></div>
+</dl>
+{% if concerts %}
+<div class="tablewrap"><table>
+  <thead><tr><th scope="col">Concert</th><th scope="col">When</th><th scope="col" class="num">Price</th><th scope="col">Sold</th><th scope="col" class="num">Revenue</th><th scope="col"><span class="sr">Actions</span></th></tr></thead>
+  <tbody>
+  {% for c in concerts %}{% set total = c.total_tickets or 0 %}
+  <tr{% if c.date|isodate < today.isoformat() %} class="pastrow"{% endif %}>
+    <td><strong>{{ c.artist_name }}</strong><br><span class="muted">{{ c.venue }}</span></td>
+    <td>{{ c.date|day }} {{ c.date|month }} {{ c.date|year }}<br><span class="muted">{{ c.time|clock }}</span></td>
+    <td class="num">{{ c.ticket_price|money }}</td>
+    <td><span class="num">{{ c.sold }} / {{ total }}</span>{% if total %}<div class="meter thin"><i style="width:{{ (c.sold / total * 100)|round(1) }}%"></i></div>{% endif %}</td>
+    <td class="num">{{ c.revenue|money }}</td>
+    <td class="actions"><a href="{{ url_for('admin_edit', concert_id=c.concert_id) }}">Edit</a>
+      <form method="post" action="{{ url_for('admin_delete', concert_id=c.concert_id) }}" onsubmit="return confirm('Delete {{ c.artist_name|e }} at {{ c.venue|e }}?')">
+        <input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="link danger">Delete</button></form></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% else %}
+<div class="empty"><p>No concerts yet.</p><a class="btn" href="{{ url_for('admin_new') }}">Add the first one</a></div>
+{% endif %}
+{% endblock %}
