@@ -1,13 +1,44 @@
 {% extends "base.html" %}
 {% block title %}Dashboard{% endblock %}
 {% block content %}
-<div class="page-head"><h1 class="page">Dashboard</h1><a class="btn" href="{{ url_for('admin_new') }}">+ Add concert</a></div>
+<div class="page-head"><h1 class="page">Dashboard</h1><div class="head-actions"><a class="btn ghost" href="{{ url_for('admin_checkin') }}">Check-in</a><a class="btn" href="{{ url_for('admin_new') }}">+ Add concert</a></div></div>
 <dl class="stats">
   <div><dt>Upcoming shows</dt><dd>{{ stats.upcoming }}</dd></div>
   <div><dt>Tickets sold</dt><dd>{{ stats.sold }}</dd></div>
   <div><dt>Revenue</dt><dd>{{ stats.revenue|money }}</dd></div>
   <div><dt>Registered users</dt><dd>{{ stats.users }}</dd></div>
 </dl>
+<div class="charts">
+  <figure class="chart">
+    <figcaption><strong>How full are upcoming shows</strong><span class="muted">Share of tickets sold, soonest first</span></figcaption>
+    {% if fill %}
+    <svg viewBox="0 0 520 {{ fill|length * 40 + 8 }}" role="img" aria-label="Bar chart of the share of tickets sold for the next {{ fill|length }} concerts">
+      {% for f in fill %}{% set y = loop.index0 * 40 + 4 %}
+      <g class="bar"><title>{{ f.label }}, {{ f.sub }}: {{ f.sold }} of {{ f.total }} sold ({{ f.pct }}%)</title>
+        <text x="0" y="{{ y + 15 }}" class="lbl">{{ f.label|truncate(22, True, '…') }}</text>
+        <text x="0" y="{{ y + 31 }}" class="sub">{{ f.sub }}</text>
+        <rect x="170" y="{{ y + 8 }}" width="300" height="18" rx="4" class="track"/>
+        {% if f.pct %}<rect x="170" y="{{ y + 8 }}" width="{{ [f.pct * 3, 8]|max }}" height="18" rx="4" class="fill"/>{% endif %}
+        <text x="478" y="{{ y + 22 }}" class="val">{{ f.pct }}%</text></g>
+      {% endfor %}
+    </svg>
+    {% else %}<p class="muted">No upcoming concerts.</p>{% endif %}
+  </figure>
+  <figure class="chart">
+    <figcaption><strong>Tickets booked per day</strong><span class="muted">Last 30 days · {{ daily|sum(attribute='n') }} in total · {{ stats.checked_in }} booking{{ 's' if stats.checked_in != 1 }} checked in</span></figcaption>
+    <svg viewBox="0 0 520 190" role="img" aria-label="Column chart of tickets booked each day over the last 30 days">
+      <line x1="0" y1="160" x2="520" y2="160" class="axis"/>
+      <text x="0" y="12" class="sub">{{ daily_max }}</text>
+      {% for d in daily %}{% set h = (d.n / daily_max * 135) if d.n else 0 %}
+      <g class="bar"><title>{{ d.day.strftime('%d %b') }}: {{ d.n }} ticket{{ 's' if d.n != 1 }}</title>
+        <rect x="{{ loop.index0 * 17.3 }}" y="20" width="15.3" height="140" class="hit"/>
+        {% if d.n %}<rect x="{{ loop.index0 * 17.3 }}" y="{{ 160 - h }}" width="15.3" height="{{ h }}" rx="3" class="fill"/>{% endif %}</g>
+      {% endfor %}
+      <text x="0" y="180" class="sub">{{ daily[0].day.strftime('%d %b') }}</text>
+      <text x="520" y="180" class="sub" text-anchor="end">Today</text>
+    </svg>
+  </figure>
+</div>
 {% if concerts %}
 <div class="tablewrap"><table>
   <thead><tr><th scope="col">Concert</th><th scope="col">When</th><th scope="col" class="num">Price</th><th scope="col">Sold</th><th scope="col" class="num">Revenue</th><th scope="col"><span class="sr">Actions</span></th></tr></thead>

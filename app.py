@@ -10,6 +10,7 @@ import secrets
 from decimal import Decimal, InvalidOperation
 from functools import wraps
 
+import click
 import mysql.connector
 from flask import Flask, abort, flash, g, redirect, render_template, request, session, url_for
 
@@ -178,13 +179,85 @@ def f_hhmm(value):
 
 
 @app.context_processor
-def inject_today():
-    return {"today": dt.date.today()}
+def inject_globals():
+    unseen = 0
+    if session.get("user"):
+        try:
+            unseen = query("SELECT COUNT(*) AS n FROM notifications WHERE username = %s AND seen = 0", (session["user"],), one=True)["n"]
+        except mysql.connector.Error:
+            unseen = 0
+    return {"today": dt.date.today(), "unseen": unseen}
+
+
+# ---------- Waitlist ----------
+
+def notify(username, message):
+    execute("INSERT INTO notifications (username, message) VALUES (%s, %s)", (username, message))
+
+
+def fill_from_waitlist(concert_id):
+    """Give freed seats to the waitlist, oldest request first. A request bigger than the seats
+    left is skipped (it stays in line) so smaller requests behind it aren't blocked.
+    Must run inside the caller's transaction, after the seats were returned."""
+    c = query("SELECT artist_name, available_tickets FROM Concerts WHERE concert_id = %s FOR UPDATE", (concert_id,), one=True)
+    if c is None:
+        return []
+    left = c["available_tickets"] or 0
+    granted = []
+    for w in query("SELECT waitlist_id, username, tickets FROM waitlist WHERE concert_id = %s ORDER BY created_at, waitlist_id", (concert_id,)):
+        if left <= 0:
+            break
+        if w["tickets"] > left:
+            continue
+        booking_id = execute("INSERT INTO bookings (username, concert_id, no_of_tickets, ticket_code) VALUES (%s, %s, %s, %s)",
+                             (w["username"], concert_id, w["tickets"], core.new_ticket_code()))
+        execute("UPDATE Concerts SET available_tickets = available_tickets - %s WHERE concert_id = %s", (w["tickets"], concert_id))
+        execute("DELETE FROM waitlist WHERE waitlist_id = %s", (w["waitlist_id"],))
+        notify(w["username"], f"Good news: seats opened up for {c['artist_name']}. You now have {w['tickets']} "
+                              f"ticket{'s' if w['tickets'] != 1 else ''} (booking #{booking_id}).")
+        left -= w["tickets"]
+        granted.append(w["username"])
+    return granted
 
 
 # ---------- Public pages ----------
 
 SORTS = {"date": "date, time", "price_low": "ticket_price, date", "price_high": "ticket_price DESC, date"}
+
+
+def recommendations(user, limit=3):
+    """Shows to suggest: artists followed or booked by fans who share your taste. With no
+    signal yet (or logged out), the upcoming shows selling fastest."""
+    today = dt.date.today().isoformat()
+    upcoming = query("SELECT * FROM Concerts WHERE date >= %s AND available_tickets > 0 ORDER BY date, time", (today,))
+    if user:
+        taste = query("SELECT username, artist_name FROM favourites UNION "
+                      "SELECT b.username, c.artist_name FROM bookings b JOIN Concerts c ON c.concert_id = b.concert_id")
+        by_user = {}
+        for r in taste:
+            by_user.setdefault(r["username"], set()).add(r["artist_name"])
+        mine = by_user.pop(user, set())
+        scores, because = {}, {}
+        for artists in by_user.values():
+            shared = artists & mine
+            if not shared:
+                continue
+            for a in artists - mine:
+                scores[a] = scores.get(a, 0) + len(shared)
+                because.setdefault(a, sorted(shared)[0])
+        picks, seen = [], set()
+        for a in sorted(scores, key=lambda a: (-scores[a], a)):
+            for c in upcoming:
+                if c["artist_name"] == a and a not in seen:
+                    picks.append(dict(c, reason=f"Fans of {because[a]} love {a}"))
+                    seen.add(a)
+                    break
+            if len(picks) == limit:
+                return picks
+        if picks:
+            return picks
+    hot = sorted(upcoming, key=lambda c: -((c["total_tickets"] or 0) - (c["available_tickets"] or 0)) / max(c["total_tickets"] or 1, 1))
+    return [dict(c, reason="Selling fast") for c in hot[:limit] if (c["total_tickets"] or 0) > (c["available_tickets"] or 0)]
 
 
 @app.get("/")
@@ -216,7 +289,8 @@ def index():
     if session.get("user"):
         favs = {r["artist_name"] for r in query("SELECT artist_name FROM favourites WHERE username = %s", (session["user"],))}
     filtered = bool(q or date_from or date_to or max_price)
-    return render_template("index.html", concerts=concerts, favs=favs, filtered=filtered,
+    recs = [] if filtered else recommendations(session.get("user"))
+    return render_template("index.html", concerts=concerts, favs=favs, filtered=filtered, recs=recs,
                            args={"q": q, "from": date_from, "to": date_to, "max": max_price, "sort": sort})
 
 
@@ -231,7 +305,97 @@ def concert(concert_id):
                        (session["user"], c["artist_name"]), one=True) is not None
     more = query("SELECT * FROM Concerts WHERE artist_name = %s AND concert_id <> %s AND date >= %s ORDER BY date LIMIT 3",
                  (c["artist_name"], concert_id, dt.date.today().isoformat()))
-    return render_template("concert.html", c=c, is_fav=is_fav, more=more, max_per=MAX_TICKETS_PER_BOOKING)
+    past = as_date(c["date"]) < dt.date.today()
+    reviews = query("SELECT username, rating, comment, created_at FROM reviews WHERE concert_id = %s ORDER BY created_at DESC",
+                    (concert_id,)) if past else []
+    artist_rating = query("SELECT AVG(r.rating) AS avg, COUNT(*) AS n FROM reviews r JOIN Concerts c ON c.concert_id = r.concert_id"
+                          " WHERE c.artist_name = %s", (c["artist_name"],), one=True)
+    wait = can_review = None
+    if session.get("user"):
+        wait = query("SELECT tickets, created_at, waitlist_id FROM waitlist WHERE username = %s AND concert_id = %s",
+                     (session["user"], concert_id), one=True)
+        if wait:
+            wait["position"] = query("SELECT COUNT(*) AS n FROM waitlist WHERE concert_id = %s AND (created_at < %s OR"
+                                     " (created_at = %s AND waitlist_id <= %s))",
+                                     (concert_id, wait["created_at"], wait["created_at"], wait["waitlist_id"]), one=True)["n"]
+        if past:
+            booked = query("SELECT 1 AS x FROM bookings WHERE username = %s AND concert_id = %s LIMIT 1", (session["user"], concert_id), one=True)
+            done = query("SELECT 1 AS x FROM reviews WHERE username = %s AND concert_id = %s", (session["user"], concert_id), one=True)
+            can_review = bool(booked) and not done
+    return render_template("concert.html", c=c, is_fav=is_fav, more=more, max_per=MAX_TICKETS_PER_BOOKING, past=past,
+                           reviews=reviews, artist_rating=artist_rating, wait=wait, can_review=can_review)
+
+
+@app.post("/concert/<int:concert_id>/waitlist")
+@login_required
+def join_waitlist(concert_id):
+    try:
+        n = int(request.form.get("tickets", ""))
+    except ValueError:
+        n = 0
+    c = query("SELECT available_tickets, date FROM Concerts WHERE concert_id = %s", (concert_id,), one=True)
+    if c is None:
+        abort(404)
+    if not 1 <= n <= MAX_TICKETS_PER_BOOKING or as_date(c["date"]) < dt.date.today():
+        flash(f"Choose between 1 and {MAX_TICKETS_PER_BOOKING} tickets.", "error")
+    elif n <= (c["available_tickets"] or 0):
+        flash("Those seats are available right now, so just book them.", "info")
+    else:
+        if query("SELECT 1 AS x FROM waitlist WHERE username = %s AND concert_id = %s", (session["user"], concert_id), one=True):
+            execute("UPDATE waitlist SET tickets = %s WHERE username = %s AND concert_id = %s", (n, session["user"], concert_id))
+        else:
+            execute("INSERT INTO waitlist (username, concert_id, tickets) VALUES (%s, %s, %s)", (session["user"], concert_id, n))
+        db().commit()
+        flash("You're on the waitlist. If seats free up, we'll book them for you automatically.", "success")
+    return redirect(url_for("concert", concert_id=concert_id))
+
+
+@app.post("/concert/<int:concert_id>/waitlist/leave")
+@login_required
+def leave_waitlist(concert_id):
+    execute("DELETE FROM waitlist WHERE username = %s AND concert_id = %s", (session["user"], concert_id))
+    db().commit()
+    flash("You've left the waitlist.", "info")
+    return redirect(safe_next(request.form.get("next")) if request.form.get("next") else url_for("concert", concert_id=concert_id))
+
+
+@app.post("/concert/<int:concert_id>/review")
+@login_required
+def review(concert_id):
+    c = query("SELECT date FROM Concerts WHERE concert_id = %s", (concert_id,), one=True)
+    if c is None:
+        abort(404)
+    booked = query("SELECT 1 AS x FROM bookings WHERE username = %s AND concert_id = %s LIMIT 1", (session["user"], concert_id), one=True)
+    if as_date(c["date"]) >= dt.date.today() or not booked:
+        abort(400, "You can review a concert after you've been to it.")
+    try:
+        rating = int(request.form.get("rating", ""))
+    except ValueError:
+        rating = 0
+    comment = request.form.get("comment", "").strip()[:500]
+    if not 1 <= rating <= 5:
+        flash("Pick a rating from 1 to 5 stars.", "error")
+        return redirect(url_for("concert", concert_id=concert_id))
+    if query("SELECT 1 AS x FROM reviews WHERE username = %s AND concert_id = %s", (session["user"], concert_id), one=True):
+        flash("You've already reviewed this show.", "info")
+    else:
+        execute("INSERT INTO reviews (username, concert_id, rating, comment) VALUES (%s, %s, %s, %s)",
+                (session["user"], concert_id, rating, comment or None))
+        db().commit()
+        flash("Thanks for the review!", "success")
+    return redirect(url_for("concert", concert_id=concert_id))
+
+
+@app.get("/bookings/<int:booking_id>/ticket")
+@login_required
+def ticket(booking_id):
+    t = query("SELECT b.*, c.artist_name, c.venue, c.date, c.time, c.organizer FROM bookings b"
+              " JOIN Concerts c ON c.concert_id = b.concert_id WHERE b.booking_id = %s AND b.username = %s",
+              (booking_id, session["user"]), one=True)
+    if t is None:
+        abort(404)
+    checkin_url = url_for("admin_checkin", code=t["ticket_code"], _external=True)
+    return render_template("ticket.html", t=t, checkin_url=checkin_url)
 
 
 @app.post("/concert/<int:concert_id>/book")
@@ -258,16 +422,17 @@ def book(concert_id):
             conn.rollback()
             flash(f"Only {left} ticket{'s' if left != 1 else ''} left." if left else "Sold out, sorry.", "error")
             return redirect(url_for("concert", concert_id=concert_id))
-        booking_id = execute("INSERT INTO bookings (username, concert_id, no_of_tickets) VALUES (%s, %s, %s)",
-                             (session["user"], concert_id, n))
+        booking_id = execute("INSERT INTO bookings (username, concert_id, no_of_tickets, ticket_code) VALUES (%s, %s, %s, %s)",
+                             (session["user"], concert_id, n, core.new_ticket_code()))
+        execute("DELETE FROM waitlist WHERE username = %s AND concert_id = %s", (session["user"], concert_id))
         execute("UPDATE Concerts SET available_tickets = available_tickets - %s WHERE concert_id = %s", (n, concert_id))
         conn.commit()
     except mysql.connector.Error:
         conn.rollback()
         flash("Booking failed. Nothing was charged; please try again.", "error")
         return redirect(url_for("concert", concert_id=concert_id))
-    flash(f"You're going! Booking #{booking_id}, {n} ticket{'s' if n != 1 else ''}.", "success")
-    return redirect(url_for("bookings"))
+    flash(f"You're going! Booking #{booking_id}, {n} ticket{'s' if n != 1 else ''}. Your e-ticket is ready.", "success")
+    return redirect(url_for("ticket", booking_id=booking_id))
 
 
 @app.post("/favourite")
@@ -344,13 +509,21 @@ def logout():
 @login_required
 def bookings():
     rows = query(
-        "SELECT b.booking_id, b.no_of_tickets, b.booked_at, c.concert_id, c.artist_name, c.venue, c.date, c.time, c.ticket_price"
+        "SELECT b.booking_id, b.no_of_tickets, b.booked_at, b.ticket_code, b.checked_in_at, c.concert_id, c.artist_name, c.venue, c.date, c.time, c.ticket_price"
         " FROM bookings b JOIN Concerts c ON c.concert_id = b.concert_id WHERE b.username = %s ORDER BY c.date, c.time",
         (session["user"],))
     today = dt.date.today()
     upcoming = [r for r in rows if as_date(r["date"]) >= today]
     past = [r for r in rows if as_date(r["date"]) < today]
-    return render_template("bookings.html", upcoming=upcoming, past=past)
+    reviewed = {r["concert_id"] for r in query("SELECT concert_id FROM reviews WHERE username = %s", (session["user"],))}
+    waiting = query("SELECT w.tickets, c.concert_id, c.artist_name, c.venue, c.date, c.time FROM waitlist w"
+                    " JOIN Concerts c ON c.concert_id = w.concert_id WHERE w.username = %s AND c.date >= %s ORDER BY c.date",
+                    (session["user"], today.isoformat()))
+    notes = query("SELECT message, created_at, seen FROM notifications WHERE username = %s ORDER BY notification_id DESC LIMIT 10",
+                  (session["user"],))
+    execute("UPDATE notifications SET seen = 1 WHERE username = %s AND seen = 0", (session["user"],))
+    db().commit()
+    return render_template("bookings.html", upcoming=upcoming, past=past, reviewed=reviewed, waiting=waiting, notes=notes)
 
 
 @app.post("/bookings/<int:booking_id>/cancel")
@@ -369,6 +542,7 @@ def cancel_booking(booking_id):
         execute("DELETE FROM bookings WHERE booking_id = %s", (booking_id,))
         execute("UPDATE Concerts SET available_tickets = available_tickets + %s WHERE concert_id = %s",
                 (b["no_of_tickets"], b["concert_id"]))
+        fill_from_waitlist(b["concert_id"])
         conn.commit()
     except mysql.connector.Error:
         conn.rollback()
@@ -428,7 +602,53 @@ def admin():
         "revenue": sum((c["revenue"] for c in concerts), Decimal(0)),
         "users": query("SELECT COUNT(*) AS n FROM user", one=True)["n"],
     }
-    return render_template("admin.html", concerts=concerts, stats=stats)
+    fill = [{"label": c["artist_name"], "sub": f_day(c["date"]) + " " + f_month(c["date"]),
+             "pct": round(100 * int(c["sold"] or 0) / c["total_tickets"]) if c["total_tickets"] else 0,
+             "sold": int(c["sold"] or 0), "total": c["total_tickets"] or 0}
+            for c in concerts if as_date(c["date"]) >= today][:8]
+    start = today - dt.timedelta(days=29)
+    per_day = {start + dt.timedelta(days=i): 0 for i in range(30)}
+    for b in query("SELECT booked_at, no_of_tickets FROM bookings"):
+        if b["booked_at"] is not None:
+            day = as_date(b["booked_at"])
+            if day in per_day:
+                per_day[day] += b["no_of_tickets"]
+    daily = [{"day": d, "n": n} for d, n in per_day.items()]
+    stats["checked_in"] = query("SELECT COUNT(*) AS n FROM bookings WHERE checked_in_at IS NOT NULL", one=True)["n"]
+    return render_template("admin.html", concerts=concerts, stats=stats, fill=fill, daily=daily,
+                           daily_max=max([d["n"] for d in daily] + [1]))
+
+
+@app.route("/admin/checkin", methods=["GET", "POST"])
+@admin_required
+def admin_checkin():
+    code = (request.values.get("code") or "").strip().upper()
+    t = None
+    if code:
+        t = query("SELECT b.*, c.artist_name, c.venue, c.date, c.time FROM bookings b JOIN Concerts c ON c.concert_id = b.concert_id"
+                  " WHERE b.ticket_code = %s", (code,), one=True)
+    if request.method == "POST" and t is not None:
+        if t["checked_in_at"]:
+            flash("This ticket was already used.", "error")
+        else:
+            execute("UPDATE bookings SET checked_in_at = %s WHERE booking_id = %s AND checked_in_at IS NULL",
+                    (dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), t["booking_id"]))
+            db().commit()
+            flash(f"Checked in: {t['no_of_tickets']} for {t['artist_name']}.", "success")
+        return redirect(url_for("admin_checkin", code=code))
+    return render_template("checkin.html", code=code, t=t)
+
+
+@app.cli.command("create-admin")
+def create_admin():
+    """Create an admin account and print its ID."""
+    pw = click.prompt("Admin password", hide_input=True, confirmation_prompt=True)
+    if len(pw) < 8:
+        raise click.ClickException("Use at least 8 characters.")
+    with app.app_context():
+        admin_id = execute("INSERT INTO admin (password) VALUES (%s)", (core.hash_password(pw),))
+        db().commit()
+    click.echo(f"Created admin {admin_id}. Log in at /admin/login with that ID.")
 
 
 def read_concert_form(form, min_total=1):
@@ -500,8 +720,9 @@ def admin_edit(concert_id):
                     (values["artist_name"], values["venue"], values["date_v"].isoformat(), values["time_v"].strftime("%H:%M:%S"),
                      str(values["price_v"]), values["total_v"], values["total_v"] - sold, values["organizer"],
                      values["artistid_v"], concert_id))
+            granted = fill_from_waitlist(concert_id)
             db().commit()
-            flash("Concert updated.", "success")
+            flash("Concert updated." + (f" {len(granted)} waitlisted fan(s) got tickets." if granted else ""), "success")
             return redirect(url_for("admin"))
         return render_template("admin_form.html", values=values, errors=errors, editing=c, sold=sold), 400
     values = {"artist_name": c["artist_name"], "venue": c["venue"], "date": f_isodate(c["date"]), "time": f_hhmm(c["time"]),

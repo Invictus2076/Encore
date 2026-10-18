@@ -1,7 +1,15 @@
 {% extends "base.html" %}
 {% block title %}{{ c.artist_name }}{% endblock %}
+{% macro waitform(c) %}
+      <form method="post" action="{{ url_for('join_waitlist', concert_id=c.concert_id) }}" class="bookform">
+        <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+        <label><span>Join the waitlist for</span>
+          <select name="tickets">{% for n in range(1, max_per + 1) %}<option value="{{ n }}">{{ n }} ticket{{ 's' if n > 1 }}</option>{% endfor %}</select></label>
+        <button class="btn wide ghost">Join waitlist</button>
+      </form>
+{% endmacro %}
 {% block content %}
-{% set left = c.available_tickets or 0 %}{% set total = c.total_tickets or 0 %}{% set past = c.date|isodate < today.isoformat() %}
+{% set left = c.available_tickets or 0 %}{% set total = c.total_tickets or 0 %}
 <a class="back" href="{{ url_for('index') }}">← All concerts</a>
 <section class="show">
   <div class="poster">
@@ -9,6 +17,7 @@
     <h1>{{ c.artist_name }}</h1>
     <p class="where">{{ c.venue }}</p>
     <p class="by">Presented by {{ c.organizer }}</p>
+    {% if artist_rating and artist_rating.n %}<p class="stars-line" aria-label="Rated {{ '%.1f'|format(artist_rating.avg) }} out of 5 from {{ artist_rating.n }} review{{ 's' if artist_rating.n != 1 }}"><span class="stars" style="--r:{{ artist_rating.avg }}"></span> {{ '%.1f'|format(artist_rating.avg) }} from {{ artist_rating.n }} fan review{{ 's' if artist_rating.n != 1 }}</p>{% endif %}
     {% if session.user %}
     <form method="post" action="{{ url_for('toggle_favourite') }}">
       <input type="hidden" name="csrf" value="{{ csrf_token() }}">
@@ -25,8 +34,12 @@
     <p class="muted">{{ left }} of {{ total }} left</p>{% endif %}
     {% if past %}
       <p class="note">This concert has already happened.</p>
+    {% elif session.user and wait %}
+      <div class="note wait"><strong>You're #{{ wait.position }} on the waitlist</strong> for {{ wait.tickets }} ticket{{ 's' if wait.tickets != 1 }}. If seats free up we'll book them for you and let you know.</div>
+      <form method="post" action="{{ url_for('leave_waitlist', concert_id=c.concert_id) }}"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="link">Leave the waitlist</button></form>
     {% elif left == 0 %}
       <p class="note">Sold out.</p>
+      {% if session.user %}{{ waitform(c) }}{% else %}<a class="btn wide ghost" href="{{ url_for('login', next=request.path) }}">Log in to join the waitlist</a>{% endif %}
     {% elif session.user %}
       <form method="post" action="{{ url_for('book', concert_id=c.concert_id) }}" class="bookform">
         <input type="hidden" name="csrf" value="{{ csrf_token() }}">
@@ -35,6 +48,7 @@
         </label>
         <button class="btn wide">Book now</button>
       </form>
+      {% if left < max_per %}<details class="more-seats"><summary>Need more than {{ left }}?</summary>{{ waitform(c) }}</details>{% endif %}
     {% elif session.admin %}
       <p class="note">Admins can't book. Log in as a user to buy tickets.</p>
     {% else %}
@@ -43,6 +57,23 @@
     {% endif %}
   </aside>
 </section>
+{% if past %}
+<section class="reviews" aria-labelledby="rev-h">
+  <h2 class="section" id="rev-h">Reviews</h2>
+  {% if can_review %}
+  <form method="post" action="{{ url_for('review', concert_id=c.concert_id) }}" class="card reviewform">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    <fieldset class="rate"><legend>You were there. How was it?</legend>
+      <div class="pick">{% for n in range(5, 0, -1) %}<input type="radio" id="r{{ n }}" name="rating" value="{{ n }}" required><label for="r{{ n }}" title="{{ n }} star{{ 's' if n > 1 }}">★<span class="sr">{{ n }} star{{ 's' if n > 1 }}</span></label>{% endfor %}</div>
+    </fieldset>
+    <label><span>Anything to add? (optional)</span><textarea name="comment" maxlength="500" rows="3"></textarea></label>
+    <button class="btn">Post review</button>
+  </form>
+  {% endif %}
+  {% if reviews %}<ul class="revlist">{% for r in reviews %}<li><p><span class="stars" style="--r:{{ r.rating }}" aria-label="{{ r.rating }} out of 5"></span> <strong>{{ r.username }}</strong></p>{% if r.comment %}<p>{{ r.comment }}</p>{% endif %}</li>{% endfor %}</ul>
+  {% elif not can_review %}<div class="empty"><p>No reviews yet.</p></div>{% endif %}
+</section>
+{% endif %}
 {% if more %}
 <h2 class="section">More from {{ c.artist_name }}</h2>
 <div class="grid">{% for c in more %}{% include "_ticket.html" %}{% endfor %}</div>

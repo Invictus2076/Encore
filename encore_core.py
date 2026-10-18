@@ -41,8 +41,43 @@ SCHEMA = [
         booked_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS waitlist (
+        waitlist_id INT AUTO_INCREMENT PRIMARY KEY,
+        username VARCHAR(255) NOT NULL,
+        concert_id INT NOT NULL,
+        tickets INT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (username, concert_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS notifications (
+        notification_id INT AUTO_INCREMENT PRIMARY KEY,
+        username VARCHAR(255) NOT NULL,
+        message VARCHAR(500) NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        seen INT NOT NULL DEFAULT 0
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS reviews (
+        username VARCHAR(255) NOT NULL,
+        concert_id INT NOT NULL,
+        rating INT NOT NULL,
+        comment VARCHAR(500),
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (username, concert_id)
+    )
+    """,
     # Concerts added by old versions never had their available tickets set.
     "UPDATE Concerts SET available_tickets = total_tickets WHERE available_tickets IS NULL",
+]
+
+# Columns added after the first release; created on databases that don't have them yet.
+ADDED_COLUMNS = [
+    ("bookings", "ticket_code", "VARCHAR(20)"),
+    ("bookings", "checked_in_at", "DATETIME"),
 ]
 
 
@@ -59,11 +94,27 @@ def connect():
     )
 
 
+def new_ticket_code():
+    """A short, hard-to-guess code printed on e-tickets, like 7F3A-9C21-B4E0."""
+    raw = secrets.token_hex(6).upper()
+    return f"{raw[0:4]}-{raw[4:8]}-{raw[8:12]}"
+
+
 def ensure_schema(conn):
     cursor = conn.cursor()
     try:
         for statement in SCHEMA:
             cursor.execute(statement)
+        for table, column, kind in ADDED_COLUMNS:
+            try:
+                cursor.execute(f"SELECT {column} FROM {table} LIMIT 1")
+                cursor.fetchall()
+            except mysql.connector.Error:
+                cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
+        # Bookings made before e-tickets get a code now.
+        cursor.execute("SELECT booking_id FROM bookings WHERE ticket_code IS NULL")
+        for (booking_id,) in cursor.fetchall():
+            cursor.execute("UPDATE bookings SET ticket_code = %s WHERE booking_id = %s", (new_ticket_code(), booking_id))
         conn.commit()
     finally:
         cursor.close()

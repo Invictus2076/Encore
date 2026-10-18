@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}E-ticket #{{ t.booking_id }}{% endblock %}
+{% block content %}
+<a class="back noprint" href="{{ url_for('bookings') }}">← My tickets</a>
+<article class="eticket" aria-label="E-ticket">
+  <div class="et-main">
+    <p class="pass-id">Encore e-ticket · Booking #{{ t.booking_id }}</p>
+    <h1>{{ t.artist_name }}</h1>
+    <dl class="et-facts">
+      <div><dt>Date</dt><dd>{{ t.date|longdate }}</dd></div>
+      <div><dt>Doors</dt><dd>{{ t.time|clock }}</dd></div>
+      <div><dt>Venue</dt><dd>{{ t.venue }}</dd></div>
+      <div><dt>Admits</dt><dd>{{ t.no_of_tickets }} {{ 'person' if t.no_of_tickets == 1 else 'people' }}</dd></div>
+      <div><dt>Name</dt><dd>{{ t.username }}</dd></div>
+      <div><dt>Presented by</dt><dd>{{ t.organizer }}</dd></div>
+    </dl>
+  </div>
+  <div class="et-code">
+    <div id="qr" class="qr" data-url="{{ checkin_url }}" role="img" aria-label="QR code for ticket {{ t.ticket_code }}"></div>
+    <p class="code-text">{{ t.ticket_code }}</p>
+    {% if t.checked_in_at %}<p class="tag out">Used</p>{% else %}<p class="muted small">Show this at the door</p>{% endif %}
+  </div>
+</article>
+<p class="center noprint"><button class="btn ghost" type="button" onclick="window.print()">Print or save as PDF</button></p>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js" integrity="sha384-8FWZA6BGMXhsfO+BLtrJK0We6gg5o1JyO8xQm6peWDEUs17ACA5ziE/NIAkl9z2k" crossorigin="anonymous"></script>
+<script>
+(function(){
+  var el=document.getElementById('qr'); if(!window.qrcode){el.textContent='Use the code below at the door.';return}
+  var q=qrcode(0,'M'); q.addData(el.dataset.url); q.make();
+  el.innerHTML=q.createSvgTag({cellSize:6,margin:2,scalable:true});
+})();
+</script>
+{% endblock %}

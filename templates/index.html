@@ -20,6 +20,10 @@
   {% if filtered %}<a class="clear" href="{{ url_for('index') }}">Clear</a>{% endif %}
 </form>
 
+{% if recs %}
+<h2 class="section">{{ 'Recommended for you' if session.user and recs[0].reason != 'Selling fast' else 'Selling fast' }}</h2>
+<div class="grid recs">{% for c in recs %}<div class="rec">{% include "_ticket.html" %}<p class="why">{{ c.reason }}</p></div>{% endfor %}</div>
+{% endif %}
 <h2 class="section">{% if filtered %}{{ concerts|length }} match{{ 'es' if concerts|length != 1 }}{% else %}Upcoming{% endif %}</h2>
 {% if concerts %}
   <div class="grid">{% for c in concerts %}{% include "_ticket.html" %}{% endfor %}</div>

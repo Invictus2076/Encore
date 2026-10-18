@@ -20,10 +20,11 @@
       <a href="{{ url_for('index') }}" {% if request.endpoint == 'index' %}aria-current="page"{% endif %}>Concerts</a>
       {% if session.user %}
         <a href="{{ url_for('favourites') }}" {% if request.endpoint == 'favourites' %}aria-current="page"{% endif %}>Favourites</a>
-        <a href="{{ url_for('bookings') }}" {% if request.endpoint == 'bookings' %}aria-current="page"{% endif %}>My tickets</a>
+        <a href="{{ url_for('bookings') }}" {% if request.endpoint == 'bookings' %}aria-current="page"{% endif %}>My tickets{% if unseen %} <span class="badge" aria-label="{{ unseen }} new update{{ 's' if unseen != 1 }}">{{ unseen }}</span>{% endif %}</a>
         <form method="post" action="{{ url_for('logout') }}" class="inline"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="link">Log out</button></form>
       {% elif session.admin %}
-        <a href="{{ url_for('admin') }}" {% if request.endpoint and request.endpoint.startswith('admin') %}aria-current="page"{% endif %}>Dashboard</a>
+        <a href="{{ url_for('admin') }}" {% if request.endpoint == 'admin' %}aria-current="page"{% endif %}>Dashboard</a>
+        <a href="{{ url_for('admin_checkin') }}" {% if request.endpoint == 'admin_checkin' %}aria-current="page"{% endif %}>Check-in</a>
         <form method="post" action="{{ url_for('admin_logout') }}" class="inline"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="link">Log out</button></form>
       {% else %}
         <a href="{{ url_for('login') }}">Log in</a>

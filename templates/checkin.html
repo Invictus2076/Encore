@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Check-in{% endblock %}
+{% block content %}
+<h1 class="page">Check-in</h1>
+<p class="muted">Scan a ticket's QR code with your phone camera, or type the code printed under it.</p>
+<form method="get" class="filters checkin" role="search">
+  <label class="grow"><span>Ticket code</span><input name="code" value="{{ code }}" placeholder="7F3A-9C21-B4E0" autocapitalize="characters" autocomplete="off" required autofocus></label>
+  <button class="btn">Look up</button>
+</form>
+{% if code %}
+  {% if t %}
+  {% set is_today = t.date|isodate == today.isoformat() %}
+  <section class="card verdict {{ 'used' if t.checked_in_at else ('ok' if is_today else 'warn') }}">
+    <p class="pass-id">Booking #{{ t.booking_id }} · {{ t.ticket_code }}</p>
+    <h2>{{ t.artist_name }}</h2>
+    <p class="meta">{{ t.date|longdate }} · {{ t.time|clock }} · {{ t.venue }}</p>
+    <p class="big">{{ t.no_of_tickets }} <span>{{ 'person' if t.no_of_tickets == 1 else 'people' }} · {{ t.username }}</span></p>
+    {% if t.checked_in_at %}
+      <p class="flash error">Already used at {{ t.checked_in_at }}.</p>
+    {% else %}
+      {% if not is_today %}<p class="flash error">This ticket is for {{ t.date|longdate }}, not today.</p>{% endif %}
+      <form method="post"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="code" value="{{ code }}"><button class="btn wide">Check in {{ t.no_of_tickets }}</button></form>
+    {% endif %}
+  </section>
+  {% else %}
+  <div class="flash error">No ticket with code {{ code }}.</div>
+  {% endif %}
+{% endif %}
+{% endblock %}
